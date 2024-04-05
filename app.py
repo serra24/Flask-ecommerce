@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///store.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'your_secret_key'  # Change this to your preferred secret key
+app.config['SECRET_KEY'] = '1234' 
 db = SQLAlchemy(app)
 
 # Database Models
@@ -20,6 +20,34 @@ class User(db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+class Product(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    price = db.Column(db.Float, nullable=False)
+
+class CartItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+
+class Order(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    total_price = db.Column(db.Float, nullable=False)
+
+class Rating(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    rating = db.Column(db.Integer, nullable=False)
+
+class Comment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
 
 # Routes
 @app.route('/register', methods=['POST'])
@@ -55,9 +83,141 @@ def login():
 
     user = User.query.filter_by(username=username).first()
     if user and user.check_password(password):
+        session['user_id'] = user.id
         return jsonify({'message': 'Logged in successfully!', 'is_admin': user.is_admin})
     else:
         return jsonify({'error': 'Invalid username or password.'}), 401
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.pop('user_id', None)
+    return jsonify({'message': 'Logged out successfully!'})
+
+@app.route('/products', methods=['GET'])
+def list_products():
+    products = Product.query.all()
+    return jsonify([{'id': product.id, 'name': product.name, 'price': product.price} for product in products])
+
+@app.route('/cart', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def manage_cart():
+    if request.method == 'GET':
+        user_id = session.get('user_id')
+        if user_id:
+            cart_items = CartItem.query.filter_by(user_id=user_id).all()
+            return jsonify([{'product_id': item.product_id, 'quantity': item.quantity} for item in cart_items])
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+    elif request.method == 'POST':
+        data = request.get_json()
+        user_id = session.get('user_id')
+        if user_id:
+            product_id = data.get('product_id')
+            quantity = data.get('quantity')
+            # Add the product to the user's cart with the specified quantity
+            return jsonify({'message': 'Product added to cart successfully!'})
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+    elif request.method == 'PUT':
+        data = request.get_json()
+        user_id = session.get('user_id')
+        if user_id:
+            product_id = data.get('product_id')
+            new_quantity = data.get('quantity')
+            # Update the quantity of the specified product in the user's cart
+            return jsonify({'message': 'Cart updated successfully!'})
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+    elif request.method == 'DELETE':
+        data = request.get_json()
+        user_id = session.get('user_id')
+        if user_id:
+            product_id = data.get('product_id')
+            # Remove the specified product from the user's cart
+            return jsonify({'message': 'Product removed from cart successfully!'})
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+
+@app.route('/orders', methods=['GET', 'POST'])
+def manage_orders():
+    if request.method == 'GET':
+        user_id = session.get('user_id')
+        if user_id:
+            orders = Order.query.filter_by(user_id=user_id).all()
+            return jsonify([{'id': order.id, 'total_price': order.total_price} for order in orders])
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+    elif request.method == 'POST':
+        user_id = session.get('user_id')
+        if user_id:
+            # Place a new order for the user
+            return jsonify({'message': 'Order placed successfully!'})
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+
+@app.route('/admin/products', methods=['GET', 'POST'])
+def admin_products():
+    if request.method == 'GET':
+        user_id = session.get('user_id')
+        if user_id:
+            user = User.query.get(user_id)
+            if user.is_admin:
+                products = Product.query.all()
+                return jsonify([{'id': product.id, 'name': product.name, 'price': product.price} for product in products])
+            else:
+                return jsonify({'error': 'Unauthorized access.'}), 403
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+    elif request.method == 'POST':
+        user_id = session.get('user_id')
+        if user_id:
+            user = User.query.get(user_id)
+            if user.is_admin:
+                data = request.get_json()
+                name = data.get('name')
+                price = data.get('price')
+                new_product = Product(name=name, price=price)
+                db.session.add(new_product)
+                db.session.commit()
+                return jsonify({'message': 'Product added successfully!'})
+            else:
+                return jsonify({'error': 'Unauthorized access.'}), 403
+        else:
+            return jsonify({'error': 'User not logged in.'}), 401
+
+@app.route('/admin/orders', methods=['GET'])
+def admin_orders():
+    user_id = session.get('user_id')
+    if user_id:
+        user = User.query.get(user_id)
+        if user.is_admin:
+            orders = Order.query.all()
+            return jsonify([{'id': order.id, 'user_id': order.user_id, 'total_price': order.total_price} for order in orders])
+        else:
+            return jsonify({'error': 'Unauthorized access.'}), 403
+    else:
+        return jsonify({'error': 'User not logged in.'}), 401
+
+@app.route('/products/<int:product_id>/rate', methods=['POST'])
+def rate_product(product_id):
+    user_id = session.get('user_id')
+    if user_id:
+        data = request.get_json()
+        rating = data.get('rating')
+        # Rate the specified product by the user
+        return jsonify({'message': 'Product rated successfully!'})
+    else:
+        return jsonify({'error': 'User not logged in.'}), 401
+
+@app.route('/products/<int:product_id>/comment', methods=['POST'])
+def comment_on_product(product_id):
+    user_id = session.get('user_id')
+    if user_id:
+        data = request.get_json()
+        content = data.get('content')
+        # Add a comment on the specified product by the user
+        return jsonify({'message': 'Comment added successfully!'})
+    else:
+        return jsonify({'error': 'User not logged in.'}), 401
 
 if __name__ == '__main__':
     with app.app_context():
